@@ -6,6 +6,7 @@ import os
 import shlex
 import subprocess
 import threading
+import uuid
 from pathlib import Path
 from typing import Protocol
 
@@ -45,6 +46,7 @@ class DeepSeekHarnessRuntime:
         self._harness = None
         self._sessions = {}
         self._session_locks = {}
+        self._process_session_prefix = uuid.uuid4().hex[:12]
         self.last_events = []
         self.last_input = ""
 
@@ -59,7 +61,8 @@ class DeepSeekHarnessRuntime:
                 api_key=self.config.deepseek_api_key or None,
             )
         if session_id not in self._sessions:
-            self._sessions[session_id] = self._harness.start_session(session_id)
+            harness_session_id = f"bot-{self._process_session_prefix}-{uuid.uuid5(uuid.NAMESPACE_URL, session_id).hex[:16]}"
+            self._sessions[session_id] = self._harness.start_session(harness_session_id)
         return self._sessions[session_id]
 
     def _lock_for(self, session_id: str) -> threading.Lock:
