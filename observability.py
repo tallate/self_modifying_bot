@@ -179,3 +179,48 @@ class Telemetry:
             failures = connection.execute("SELECT COUNT(*) FROM trace_events WHERE status = 'failure'").fetchone()[0]
             running = connection.execute("SELECT COUNT(*) FROM trace_events WHERE status = 'running'").fetchone()[0]
             return {"events": total, "failures": failures, "running": running}
+
+    def trace_summaries(self, limit: int = 50) -> list[dict[str, Any]]:
+        """Aggregate event rows into one operational summary per trace."""
+        events = self.recent(max(limit * 8, 200))
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for event in events:
+            grouped.setdefault(event["trace_id"], []).append(event)
+        summaries = []
+        for trace_id, trace_events in grouped.items():
+            failures = [event for event in trace_events if event["status"] == "failure"]
+            running = any(event["status"] == "running" for event in trace_events)
+            is_async = any(event["event_name"] in {"queue.enqueue", "worker.process"} for event in trace_events)
+            started = min(event["started_at"] for event in trace_events)
+            durations = [event["duration_ms"] for event in trace_events if event.get("duration_ms") is not None]
+            error = failures[0] if failures else None
+            summaries.append({
+                "trace_id": trace_id,
+                "mode": "async" if is_async else "sync",
+                "status": "running" if running else ("failure" if failures else "success"),
+                "event_count": len(trace_events),
+                "started_at": started,
+                "duration_ms": max(durations) if durations else None,
+                "error_type": error.get("error_type") if error else None,
+                "error_message": error.get("error_message") if error else None,
+                "analysis": self._failure_analysis(error, trace_events) if error else "链路完成，无失败事件",
+            })
+        return sorted(summaries, key=lambda item: item["started_at"], reverse=True)[:limit]
+
+    @staticmethod
+    def _failure_analysis(error: dict[str, Any] | None, events: list[dict[str, Any]]) -> str:
+        if error is None:
+            return "链路完成，无失败事件"
+        error_type = error.get("error_type") or "UnknownError"
+        message = error.get("error_message") or ""
+        if error_type == "RuntimeBusyError":
+            return "同一会话已有 Harness 请求未结束；建议回收超时 Runtime 后重试。"
+        if error_type == "TimeoutError":
+            return "模型或工具调用超过超时上限；应检查模型延迟、工具调用和 Harness 子进程。"
+        if "TransportClosed" in error_type or "transport" in message.lower():
+            return "Harness 子进程或传输通道提前关闭；应检查 Node Runtime、进程回收和启动日志。"
+        if "persisted log" in message or "id collision" in message:
+            return "Harness Session ID 与旧持久化日志冲突；应使用当前进程隔离的 Session ID。"
+        if error_type == "RuntimeEmptyResponseError":
+            return "Harness 完成了本轮但没有最终文本；应检查 turn/end 事件和模型输出。"
+        return f"失败发生在 {error.get('component', 'unknown')} 阶段，需结合事件详情检查：{error_type}。"

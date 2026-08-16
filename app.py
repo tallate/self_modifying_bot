@@ -127,6 +127,11 @@ async def observability_traces() -> list[dict]:
     return telemetry.recent()
 
 
+@app.get("/api/observability/trace-summaries")
+async def observability_trace_summaries() -> list[dict]:
+    return telemetry.trace_summaries()
+
+
 @app.get("/api/observability/traces/{trace_id}")
 async def observability_trace(trace_id: str) -> list[dict]:
     return telemetry.trace(trace_id)
@@ -135,16 +140,17 @@ async def observability_trace(trace_id: str) -> list[dict]:
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard() -> str:
     summary = telemetry.summary()
-    events = telemetry.recent(30)
+    traces = telemetry.trace_summaries(30)
     health = "healthy" if summary["failures"] == 0 else "warning"
     health_label = "健康" if health == "healthy" else "需要关注"
     rows = "".join(
         f"<tr><td><a href='/dashboard/traces/{escape(row['trace_id'])}'>{escape(row['trace_id'])}</a></td>"
-        f"<td>{escape(row['event_name'])}</td><td>{escape(row['component'])}</td>"
+        f"<td><span class='mode'>{escape(row['mode'])}</span></td>"
         f"<td><span class='status {escape(row['status'])}'>{escape(row['status'])}</span></td>"
-        f"<td>{escape(str(row['duration_ms'] or '—'))} ms</td><td class='error'>{escape(row['error_type'] or '—')}</td></tr>"
-        for row in events
-    ) or "<tr><td colspan='6' class='empty'>暂无 Trace 事件</td></tr>"
+        f"<td>{escape(str(row['event_count']))}</td><td>{escape(str(row['duration_ms'] or '—'))} ms</td>"
+        f"<td class='error'>{escape(row['error_type'] or '—')}<br><small>{escape(row['analysis'])}</small></td></tr>"
+        for row in traces
+    ) or "<tr><td colspan='6' class='empty'>暂无 Trace</td></tr>"
     return f"""<!doctype html>
 <html lang='zh-CN'><head><meta charset='utf-8'><meta http-equiv='refresh' content='15'>
 <meta name='viewport' content='width=device-width,initial-scale=1'><title>Self Modifying Bot · Operations</title>
@@ -163,14 +169,14 @@ h1 {{ font-size:27px; margin:0 0 4px; }} .subtitle {{ color:var(--muted); }} .re
 .runtime {{ display:flex; align-items:center; gap:14px; }} .dot {{ width:10px; height:10px; background:var(--green); border-radius:50%; box-shadow:0 0 12px var(--green); }}
 .runtime strong {{ font-size:16px; }} .runtime span {{ color:var(--muted); }} .table-wrap {{ overflow:auto; background:var(--panel); border:1px solid var(--line); border-radius:14px; }}
 table {{ width:100%; border-collapse:collapse; min-width:760px; }} th,td {{ padding:13px 16px; text-align:left; border-bottom:1px solid var(--line); }} th {{ color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.05em; }} tr:last-child td {{ border-bottom:0; }}
-a {{ color:var(--blue); text-decoration:none; }} .status {{ border-radius:999px; padding:4px 9px; font-size:11px; }} .status.success {{ color:var(--green); background:#123426; }} .status.failure {{ color:var(--red); background:#3a1725; }} .status.running {{ color:var(--amber); background:#3c2d0d; }} .error {{ color:var(--red); }} .empty {{ color:var(--muted); text-align:center; padding:28px; }}
+a {{ color:var(--blue); text-decoration:none; }} .status,.mode {{ border-radius:999px; padding:4px 9px; font-size:11px; }} .mode {{ color:var(--blue); background:#172d50; }} .status.success {{ color:var(--green); background:#123426; }} .status.failure {{ color:var(--red); background:#3a1725; }} .status.running {{ color:var(--amber); background:#3c2d0d; }} .error {{ color:var(--red); }} .error small {{ color:var(--muted); }} .empty {{ color:var(--muted); text-align:center; padding:28px; }}
 @media(max-width:900px) {{ .side {{ display:none }} .main {{ padding:24px 16px }} .grid {{ grid-template-columns:repeat(2,1fr); }} }}
 </style></head><body><div class='layout'>
 <aside class='side'><div class='brand'>self_modifying_bot<small>Agent Operations</small></div><div class='nav'><div class='active'>Overview</div><div>Traces</div><div>Failures</div><div>Queue</div><div>Runtimes</div></div></aside>
 <main class='main'><div class='top'><div><h1>系统概览</h1><div class='subtitle'>本地可观测性 · 最近事件实时快照</div></div><div><span class='pill'>● {health_label}</span><div class='refresh'>每 15 秒自动刷新</div></div></div>
 <div class='grid'><div class='card'><div class='label'>系统状态</div><div class='value' style='color:var(--green)'>在线</div></div><div class='card'><div class='label'>Trace 事件</div><div class='value'>{summary['events']}</div></div><div class='card'><div class='label'>失败事件</div><div class='value' style='color:{'var(--red)' if summary['failures'] else 'var(--green)'}'>{summary['failures']}</div></div><div class='card'><div class='label'>运行中</div><div class='value' style='color:var(--amber)'>{summary['running']}</div></div></div>
 <div class='section'><div class='section-head'><h2>当前 Runtime</h2><span class='label'>默认路由</span></div><div class='card runtime'><span class='dot'></span><div><strong>{escape(config.runtime)}</strong><br><span>{escape(config.model)} · {escape(config.provider)}</span></div></div></div>
-<div class='section'><div class='section-head'><h2>最近 Trace 事件</h2><a href='/api/observability/traces'>查看 JSON</a></div><div class='table-wrap'><table><tr><th>Trace</th><th>阶段</th><th>组件</th><th>状态</th><th>耗时</th><th>错误</th></tr>{rows}</table></div></div>
+<div class='section'><div class='section-head'><h2>最近 Trace</h2><a href='/api/observability/trace-summaries'>查看汇总 JSON</a></div><div class='table-wrap'><table><tr><th>Trace</th><th>模式</th><th>状态</th><th>事件数</th><th>耗时</th><th>失败原因 / 链路分析</th></tr>{rows}</table></div></div>
 </main></div></body></html>"""
 
 
