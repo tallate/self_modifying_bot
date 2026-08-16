@@ -129,7 +129,8 @@ class Telemetry:
                         isinstance(item, dict) and item.get("isError") for item in content
                     ),
                 }
-                self.start(trace_id, "tool.result", "harness", calls.get(call_id, parent_id), **attributes)
+                result_event = self.start(trace_id, "tool.result", "harness", calls.get(call_id, parent_id), **attributes)
+                self.finish(result_event, "failure" if attributes["is_error"] else "success")
                 recorded += 1
         return recorded
 

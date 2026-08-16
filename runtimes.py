@@ -30,6 +30,10 @@ class RuntimeBusyError(RuntimeError):
     """Raised when a session already has an active Harness turn."""
 
 
+class RuntimeEmptyResponseError(RuntimeError):
+    """Raised when a Harness completes without a user-facing response."""
+
+
 class EchoRuntime:
     async def reply(self, text: str, session_id: str, memory: str = "") -> str:
         return f"收到：{text}"
@@ -78,6 +82,10 @@ class DeepSeekHarnessRuntime:
             try:
                 result = self._session(session_id).run(prompt)
                 self.last_events = result.events
+                if result.finish_reason == "error":
+                    raise RuntimeError(self._last_runtime_error(result.events))
+                if not result.final_response.strip():
+                    raise RuntimeEmptyResponseError("Harness completed without a final response")
                 return result.final_response
             finally:
                 lock.release()
@@ -90,6 +98,16 @@ class DeepSeekHarnessRuntime:
             self._harness = None
             self._sessions.clear()
             self._session_locks.clear()
+
+    @staticmethod
+    def _last_runtime_error(events: list[dict]) -> str:
+        for event in reversed(events):
+            if event.get("type") not in {"turn/end", "assistant/chunk"}:
+                continue
+            text = str(event.get("data", {}))
+            if text:
+                return text[:1000]
+        return "Harness returned an error finish reason"
 
     def _prompt(self, text: str, session_id: str, memory: str) -> str:
         return (
