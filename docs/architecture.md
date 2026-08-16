@@ -148,3 +148,108 @@ Evolution Manager 的发布流程：
 - 默认 Runtime 可配置为 `deepseek-harness`，模型默认 DeepSeek；`hermes-agent` 是可选 Runtime，而不是被魔改的内嵌库。
 
 这种边界不会修改原生 Harness 的能力。Adapter 优先使用其公开接口；必要扩展以外置插件、MCP 服务或子进程桥接实现。只有用户主动选择维护一个上游补丁版时，才进入 fork/patch 模式。
+
+## 8. 各 Harness 的自进化接入模型
+
+自进化的外部 seam 应放在 `Runtime Adapter` 与 `Evolution Manager` 之间，而不是把三个原生 Harness 的内部状态直接混在一起。这样控制层只需要理解一套小而稳定的接口，复杂性留在各 Adapter 内部；这是一处真正有价值的 deep module：调用方提交规范事件和候选，Adapter 负责把候选投影到对应 Harness。
+
+统一接口建议保持为：
+
+```python
+class EvolutionAdapter(Protocol):
+    async def observe(self, events: list[RuntimeEvent]) -> list[LearningSignal]: ...
+    async def propose(self, signal: LearningSignal) -> list[EvolutionCandidate]: ...
+    async def project(self, candidate: ApprovedCandidate) -> ProjectionResult: ...
+    async def collect(self, projection_id: str) -> list[RuntimeEvent]: ...
+    async def rollback(self, projection_id: str) -> None: ...
+```
+
+这套接口的关键不在方法数量，而在不变量：`observe` 不能直接修改生产状态；`propose` 只能生成带证据和作用域的候选；`project` 只能处理已经通过策略门的版本；`collect` 必须返回可关联的事件；`rollback` 必须不删除规范会话、原始轨迹和审计记录。
+
+三套 Harness 的进化对象不同，因此采用不同的投影方式：
+
+| Harness | 原生进化对象 | 在 Bot 中的统一对象 | 默认落点 |
+|---|---|---|---|
+| Hermes | Skill、Curator 整理、程序性知识 | `SkillCandidate` / `MemoryCandidate` | Skill Registry 的候选版本 |
+| DeepSeek Harness | Cordis 动态插件、工具和服务 | `PluginCandidate` / `CapabilityCandidate` | Candidate Environment，随后生成正式插件 |
+| Prime Agent | local/global refinement、Agent Spec、持久工作状态 | `RefinementCandidate` / `AgentSpecCandidate` | Session 或 Project scope，申请晋级 |
+
+统一控制层不要求三者使用相同的内部格式，而要求它们共享：候选 ID、来源事件、作用域、风险级别、所需能力、评测结果、当前版本和回滚目标。这样一个 Harness 学到的经验可以被另一个 Harness 消费，但不会把 Hermes 的 Skill 文件误当成 DeepSeek 的可执行插件。
+
+### 8.1 进化状态机
+
+每一个候选都必须经过明确状态，状态变化写入审计日志：
+
+```mermaid
+stateDiagram-v2
+    [*] --> Observed: 轨迹/反馈/故障
+    Observed --> Proposed: Adapter 生成候选
+    Proposed --> Rejected: 策略拒绝
+    Proposed --> Evaluating: 隔离评测
+    Evaluating --> Rejected: 测试或安全失败
+    Evaluating --> Shadow: 指标通过
+    Shadow --> Canary: 影子指标通过
+    Shadow --> RolledBack: 退化
+    Canary --> Released: 小流量通过
+    Canary --> RolledBack: 退化
+    Released --> Disabled: 持续失败
+    Released --> RolledBack: 回滚
+    RolledBack --> Proposed: 修订后重新提案
+```
+
+`MemoryCandidate` 和低风险 `SkillCandidate` 可以采用更短路径，但仍需来源、版本和撤销记录；插件、工具能力、Agent Adapter 和控制层代码不得跳过 `Evaluating`、`Shadow` 或人工批准。任何候选都不能直接写入当前生产 Runtime 的源码目录。
+
+### 8.2 统一控制层与原生 Harness 的双向同步
+
+同步必须是“事件 + 投影”，而不是双向复制文件：
+
+```mermaid
+flowchart LR
+    E[Canonical Events] --> X[Learning Extractor]
+    X --> R[Candidate Registry]
+    R --> G[Policy + Evaluation Gate]
+    G --> P[Approved Projection]
+    P --> H1[Hermes Skill projection]
+    P --> H2[DeepSeek Cordis plugin projection]
+    P --> H3[Prime refinement projection]
+    H1 --> O[Observed Runtime Events]
+    H2 --> O
+    H3 --> O
+    O --> E
+```
+
+每个投影携带 `projection_id`、`candidate_id` 和 `source_version`，回传事件必须幂等。控制层只接受新版本或同版本的补充事件，拒绝旧投影覆盖新状态；检测到循环同步时，按 `origin` 和事件版本去重。原生 Harness 的本地文件、动态插件或 refinement 状态可以丢失，但规范 Registry、Session、候选和审计记录不能丢失。
+
+### 8.3 三套 Harness 的具体释放方式
+
+Hermes 适合作为知识进化器：保留其 Background Review 和 Curator，让它只维护标记为 `curator_managed` 的 Skill。Curator 的 patch、archive、usage 和 backup 事件先回传控制层，控制层完成冲突检查和回放评测后再批准新的 Skill 版本。
+
+DeepSeek Harness 适合作为能力实验器：允许它在 Candidate Environment 中 inspect、define 和 run 动态插件，但禁止直接加载生产密钥或共享宿主 shell。成功的 Cordis 包转换为带 manifest、依赖锁、能力清单、健康检查和签名的 `PluginCandidate`；通过评测后才发布到 Runtime 目录。
+
+Prime Agent 适合作为局部精炼器：允许 `/refine` 修改 session-local 或 project-local 状态，保留其 planning/apply 分离、冲突检测和 snapshot。写入 global scope 必须转化为 `AgentSpecCandidate`，由控制层进行跨 Runtime 回放；持久 Kernel 只能绑定授权的 Execution Environment，不能继承控制面的生产权限。
+
+## 9. 上下文、能力和自进化的隔离
+
+一次 Runtime 切换或候选评测需要区分三种状态：
+
+| 状态 | 是否跨 Harness 迁移 | 方式 |
+|---|---|---|
+| 规范上下文 | 是 | 消息、摘要、任务和产物引用 |
+| 可验证知识 | 是 | Memory/Skill/Agent Spec 的版本化投影 |
+| 私有运行状态 | 否，除非 Adapter 支持 | checkpoint、进程、KV cache、Kernel 状态 |
+
+工具能力也不能因为 Runtime 进化而自动扩大。每次工具请求仍重新经过 `Tool Broker → Policy → Execution Environment`，并以当前主体、Session、候选版本和环境计算授权结果。候选只能申请能力，不能授予能力；能力授予由策略和人工审批决定。
+
+因此“越对话越聪明”的闭环是：
+
+```text
+对话/工具事件
+  → 学习信号
+  → 有证据的候选
+  → 隔离评测
+  → 影子/灰度验证
+  → 版本化投影到一个或多个 Harness
+  → 观察效果并可回滚
+```
+
+系统的改进对象是可验证的行为、知识和插件版本，而不是无界地修改自身权限。这样既能释放每个 Harness 的原生自进化优势，又能让用户主动切换 Runtime 时保留规范上下文，并确保失败时回到上一个稳定版本。
