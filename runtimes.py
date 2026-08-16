@@ -101,6 +101,7 @@ class DeepSeekHarnessRuntime:
             self._harness = None
             self._sessions.clear()
             self._session_locks.clear()
+            self._process_session_prefix = uuid.uuid4().hex[:12]
             try:
                 harness.close()
             except Exception:
