@@ -331,7 +331,7 @@ async def try_sync_reply(user_id: str, text: str) -> str | None:
     selected_runtime = runtime if runtime_name == config.runtime else build_runtime(config, runtime_name)
     try:
         reply = await asyncio.wait_for(
-            selected_runtime.reply(text, user_id, memory.context(user_id)), timeout=4
+            selected_runtime.reply(text, user_id, memory.context(user_id)), timeout=60
         )
     except (TimeoutError, asyncio.TimeoutError):
         telemetry.finish(model_input_event, payload=telemetry.capture(getattr(selected_runtime, "last_input", text)))
