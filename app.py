@@ -310,6 +310,9 @@ def is_simple_query(text: str) -> bool:
 async def try_sync_reply(user_id: str, text: str) -> str | None:
     if not is_simple_query(text):
         return None
+    quick_reply = quick_greeting(text)
+    if quick_reply is not None:
+        return quick_reply
     runtime_name = jobs.get_session_runtime(user_id, config.runtime)
     trace_id = telemetry.new_trace_id()
     runtime_event = telemetry.start(trace_id, "runtime.call", runtime_name, runtime=runtime_name, model=config.model)
@@ -350,3 +353,10 @@ async def try_sync_reply(user_id: str, text: str) -> str | None:
     memory.remember(user_id, text, reply)
     jobs.apply_pending_runtime(user_id)
     return reply[:2000]
+
+
+def quick_greeting(text: str) -> str | None:
+    normalized = re.sub(r"[\s，。！？!?,.、]+", "", text.strip().lower())
+    if normalized in {"你好", "您好", "嗨", "hello", "hi", "hey"}:
+        return "你好！我是 self_modifying_bot，有什么可以帮你？"
+    return None
