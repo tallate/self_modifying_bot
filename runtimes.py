@@ -35,6 +35,8 @@ class DeepSeekHarnessRuntime:
         self.config = config
         self._harness = None
         self._sessions = {}
+        self.last_events = []
+        self.last_input = ""
 
     def _session(self, session_id: str):
         from deepseek_harness import DeepSeekHarness
@@ -57,7 +59,10 @@ class DeepSeekHarnessRuntime:
             return "DeepSeek Harness 尚未安装。当前是回声模式：收到：" + text
 
         def run() -> str:
-            result = self._session(session_id).run(self._prompt(text, session_id, memory))
+            prompt = self._prompt(text, session_id, memory)
+            self.last_input = prompt
+            result = self._session(session_id).run(prompt)
+            self.last_events = result.events
             return result.final_response
 
         return await asyncio.to_thread(run)
@@ -79,11 +84,14 @@ class DeepSeekHarnessRuntime:
 class HermesAgentRuntime:
     def __init__(self, config: BotConfig) -> None:
         self.command = config.hermes_command
+        self.last_input = ""
+        self.last_events = []
 
     async def reply(self, text: str, session_id: str, memory: str = "") -> str:
         payload = json.dumps(
             {"session_id": session_id, "message": text, "memory": memory}, ensure_ascii=False
         )
+        self.last_input = payload
         command = shlex.split(self.command)
 
         def run() -> str:
@@ -103,10 +111,20 @@ class HermesAgentRuntime:
 
 def build_runtime(config: BotConfig, runtime_name: str | None = None) -> AgentRuntime:
     selected = runtime_name or config.runtime
+    cache_key = (id(config), selected)
+    cached = _RUNTIME_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
     if selected in {"deepseek", "deepseek_harness"}:
-        return DeepSeekHarnessRuntime(config)
-    if selected in {"hermes", "hermes_agent"}:
-        return HermesAgentRuntime(config)
-    if selected == "echo":
-        return EchoRuntime()
-    raise ValueError(f"Unsupported runtime: {config.runtime}")
+        instance = DeepSeekHarnessRuntime(config)
+    elif selected in {"hermes", "hermes_agent"}:
+        instance = HermesAgentRuntime(config)
+    elif selected == "echo":
+        instance = EchoRuntime()
+    else:
+        raise ValueError(f"Unsupported runtime: {selected}")
+    _RUNTIME_CACHE[cache_key] = instance
+    return instance
+
+
+_RUNTIME_CACHE: dict[tuple[int, str], AgentRuntime] = {}

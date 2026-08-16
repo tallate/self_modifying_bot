@@ -66,9 +66,13 @@ async def run_worker() -> None:
         telemetry.finish(model_input_event)
         try:
             result = await runtime.reply(job["text"], job["session_id"], "")
+            telemetry.finish(model_input_event, payload=telemetry.capture(getattr(runtime, "last_input", job["text"])))
+            tool_event_count = telemetry.record_runtime_events(
+                trace_id, getattr(runtime, "last_events", []), runtime_event
+            )
             model_output_event = telemetry.start(
                 trace_id, "model.output", runtime_name, runtime_event,
-                payload=telemetry.capture(result), output_length=len(result), tool_events="adapter_not_exposed",
+                payload=telemetry.capture(result), output_length=len(result), tool_events=tool_event_count,
             )
             telemetry.finish(model_output_event)
             telemetry.finish(runtime_event, output_length=len(result), tool_events="adapter_not_exposed")
@@ -78,6 +82,7 @@ async def run_worker() -> None:
             recipient = store.get_notification_email(job["session_id"], config.notification_recipient)
             notify(config, recipient, f"Bot 任务 {job['id']} 已完成", f"任务 {job['id']} 已完成。\n\n{result}")
         except Exception as error:
+            telemetry.finish(model_input_event, payload=telemetry.capture(getattr(runtime, "last_input", job["text"])))
             telemetry.finish(runtime_event, "failure", error)
             telemetry.finish(worker_event, "failure", error, job_id=job["id"])
             store.finish(job["id"], worker_id, error=str(error))

@@ -77,17 +77,75 @@ class Telemetry:
     def finish(self, event_id: int, status: str = "success", error: BaseException | None = None, **attributes: Any) -> None:
         finished = datetime.now(timezone.utc)
         with self._connect() as connection:
-            row = connection.execute("SELECT started_at FROM trace_events WHERE id = ?", (event_id,)).fetchone()
+            row = connection.execute(
+                "SELECT started_at, attributes_json FROM trace_events WHERE id = ?", (event_id,)
+            ).fetchone()
             if row is None:
                 return
             started = datetime.fromisoformat(row["started_at"])
             error_type = type(error).__name__ if error else None
+            try:
+                stored_attributes = json.loads(row["attributes_json"] or "{}")
+            except json.JSONDecodeError:
+                stored_attributes = {}
+            stored_attributes.update(attributes)
             connection.execute(
                 """UPDATE trace_events SET status = ?, finished_at = ?, duration_ms = ?,
                 attributes_json = ?, error_type = ?, error_message = ? WHERE id = ?""",
                 (status, finished.isoformat(), int((finished - started).total_seconds() * 1000),
-                 json.dumps(attributes, ensure_ascii=False), error_type, str(error) if error else None, event_id),
+                 json.dumps(stored_attributes, ensure_ascii=False), error_type, str(error) if error else None, event_id),
             )
+
+    def record_runtime_events(self, trace_id: str, events: list[dict[str, Any]], parent_id: int) -> int:
+        """Persist model tool/call and tool/result events emitted by a Harness."""
+        calls: dict[str, int] = {}
+        recorded = 0
+        for event in events:
+            event_type = event.get("type")
+            data = event.get("data") if isinstance(event.get("data"), dict) else {}
+            if event_type == "tool/call":
+                call_id = str(data.get("callId", ""))
+                event_id = self.start(
+                    trace_id,
+                    "tool.call",
+                    "harness",
+                    parent_id,
+                    call_id=call_id,
+                    tool_name=data.get("name", ""),
+                    arguments=self.capture(data.get("arguments", "")),
+                )
+                calls[call_id] = event_id
+                self.finish(event_id)
+                recorded += 1
+            elif event_type == "tool/result":
+                message = data.get("message") if isinstance(data.get("message"), dict) else {}
+                call_id = str((message.get("source") or {}).get("callId", ""))
+                content = message.get("content") if isinstance(message.get("content"), list) else []
+                result_text = "\n".join(self._text_values(content)) or self.capture(content)
+                attributes = {
+                    "call_id": call_id,
+                    "result": self.capture(result_text),
+                    "is_error": any(
+                        isinstance(item, dict) and item.get("isError") for item in content
+                    ),
+                }
+                self.start(trace_id, "tool.result", "harness", calls.get(call_id, parent_id), **attributes)
+                recorded += 1
+        return recorded
+
+    @staticmethod
+    def _text_values(value: Any) -> list[str]:
+        if isinstance(value, dict):
+            values = [value["text"]] if isinstance(value.get("text"), str) else []
+            for child in value.values():
+                values.extend(Telemetry._text_values(child))
+            return values
+        if isinstance(value, list):
+            values: list[str] = []
+            for child in value:
+                values.extend(Telemetry._text_values(child))
+            return values
+        return []
 
     def recent_failures(self, limit: int = 20) -> list[dict[str, Any]]:
         with self._connect() as connection:

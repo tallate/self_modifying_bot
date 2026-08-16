@@ -31,7 +31,7 @@ tool.call     -> Harness 暴露的工具名称、脱敏参数和调用状态
 tool.result   -> 工具结果摘要、耗时和错误
 ```
 
-当前 DeepSeek/Hermes 适配器仍使用兼容的 `reply()` 接口，尚未把原生工具事件暴露给控制层，因此 Trace 会在 `model.output` 和 `runtime.call` 中标记 `tool_events=adapter_not_exposed`，不会伪造工具调用。完成事件流 Adapter 后，按上述 `tool.call`/`tool.result` 事件写入同一 Trace。
+DeepSeek Adapter 现在读取 SDK `RunResult.events`，将原生 `tool/call` 和 `tool/result` 转换为同一 Trace 下的 `tool.call`/`tool.result`；Hermes 若仍只返回文本，则不会伪造工具调用。Trace 的 `runtime.call` 和 `model.output` 会记录实际捕获到的工具事件数量。
 
 ## 接口
 

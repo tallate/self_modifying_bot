@@ -38,6 +38,11 @@ class ChatResponse(BaseModel):
     session_id: str
 
 
+def record_runtime_events(trace_id: str, runtime_event: int, selected_runtime: object) -> int:
+    events = getattr(selected_runtime, "last_events", [])
+    return telemetry.record_runtime_events(trace_id, events, runtime_event)
+
+
 web_origins = [item.strip() for item in config.web_origins.split(",") if item.strip()]
 app.add_middleware(
     CORSMiddleware,
@@ -74,15 +79,19 @@ async def web_chat(payload: ChatRequest) -> ChatResponse:
             selected_runtime.reply(text, session_id, memory.context(session_id)), timeout=60
         )
     except (TimeoutError, asyncio.TimeoutError) as error:
+        telemetry.finish(model_input_event, payload=telemetry.capture(getattr(selected_runtime, "last_input", text)))
         telemetry.finish(runtime_event, "failure", error)
         raise HTTPException(status_code=504, detail="机器人响应超时，请稍后重试") from error
     except Exception as error:
+        telemetry.finish(model_input_event, payload=telemetry.capture(getattr(selected_runtime, "last_input", text)))
         telemetry.finish(runtime_event, "failure", error)
         raise HTTPException(status_code=502, detail="机器人暂时不可用，请稍后重试") from error
 
+    telemetry.finish(model_input_event, payload=telemetry.capture(getattr(selected_runtime, "last_input", text)))
+    tool_event_count = record_runtime_events(trace_id, runtime_event, selected_runtime)
     model_output_event = telemetry.start(
         trace_id, "model.output", runtime_name, runtime=runtime_name, parent_id=runtime_event,
-        payload=telemetry.capture(reply), output_length=len(reply), tool_events="adapter_not_exposed",
+        payload=telemetry.capture(reply), output_length=len(reply), tool_events=tool_event_count,
     )
     telemetry.finish(model_output_event)
     telemetry.finish(runtime_event, output_length=len(reply), tool_events="adapter_not_exposed")
@@ -307,14 +316,18 @@ async def try_sync_reply(user_id: str, text: str) -> str | None:
             selected_runtime.reply(text, user_id, memory.context(user_id)), timeout=4
         )
     except (TimeoutError, asyncio.TimeoutError):
+        telemetry.finish(model_input_event, payload=telemetry.capture(getattr(selected_runtime, "last_input", text)))
         telemetry.finish(runtime_event, "failure", TimeoutError("runtime timeout"))
         return None
     except Exception as error:
+        telemetry.finish(model_input_event, payload=telemetry.capture(getattr(selected_runtime, "last_input", text)))
         telemetry.finish(runtime_event, "failure", error)
         return f"当前 Harness 调用失败：{type(error).__name__}。请检查 Harness 配置后重试。"
+    telemetry.finish(model_input_event, payload=telemetry.capture(getattr(selected_runtime, "last_input", text)))
+    tool_event_count = record_runtime_events(trace_id, runtime_event, selected_runtime)
     model_output_event = telemetry.start(
         trace_id, "model.output", runtime_name, runtime=runtime_name, parent_id=runtime_event,
-        payload=telemetry.capture(reply), output_length=len(reply), tool_events="adapter_not_exposed",
+        payload=telemetry.capture(reply), output_length=len(reply), tool_events=tool_event_count,
     )
     telemetry.finish(model_output_event)
     telemetry.finish(runtime_event, output_length=len(reply), tool_events="adapter_not_exposed")
