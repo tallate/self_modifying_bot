@@ -80,8 +80,8 @@ class DeepSeekHarnessRuntime:
             prompt = self._prompt(text, session_id, memory)
             self.last_input = prompt
             lock = self._lock_for(session_id)
-            if not lock.acquire(blocking=False):
-                raise RuntimeBusyError(f"session {session_id} already has an active Harness turn")
+            if not lock.acquire(timeout=45):
+                raise RuntimeBusyError(f"session {session_id} remained busy for 45 seconds")
             try:
                 result = self._session(session_id).run(prompt)
                 self.last_events = result.events
