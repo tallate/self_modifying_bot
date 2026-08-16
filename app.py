@@ -95,6 +95,8 @@ async def web_chat(payload: ChatRequest) -> ChatResponse:
         telemetry.finish(runtime_event, "failure", error)
         raise HTTPException(status_code=502, detail="Harness 未返回有效内容，请稍后重试") from error
     except Exception as error:
+        if hasattr(selected_runtime, "close"):
+            selected_runtime.close()
         telemetry.finish(model_input_event, payload=telemetry.capture(getattr(selected_runtime, "last_input", text)))
         telemetry.finish(runtime_event, "failure", error)
         raise HTTPException(status_code=502, detail="机器人暂时不可用，请稍后重试") from error
@@ -366,6 +368,8 @@ async def try_sync_reply(user_id: str, text: str) -> str | None:
         telemetry.finish(runtime_event, "failure", error)
         return "Harness 没有返回有效内容，请稍后重试。"
     except Exception as error:
+        if hasattr(selected_runtime, "close"):
+            selected_runtime.close()
         telemetry.finish(model_input_event, payload=telemetry.capture(getattr(selected_runtime, "last_input", text)))
         telemetry.finish(runtime_event, "failure", error)
         return f"当前 Harness 调用失败：{type(error).__name__}。请检查 Harness 配置后重试。"
