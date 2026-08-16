@@ -8,7 +8,7 @@ from html import escape
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from pydantic import BaseModel, Field
 
 from channels import WeChatChannel
@@ -198,16 +198,16 @@ async def verify_wechat(
     return echostr
 
 
-@app.post("/wechat", response_class=PlainTextResponse)
-async def receive_wechat(request: Request) -> str:
+@app.post("/wechat", response_class=Response)
+async def receive_wechat(request: Request) -> Response:
     query = request.query_params
     if not wechat.verify(query.get("signature", ""), query.get("timestamp", ""), query.get("nonce", "")):
         raise HTTPException(status_code=403, detail="invalid wechat signature")
 
     root = ET.fromstring(await request.body())
-    message = {child.tag: child.text or "" for child in root}
+    message = {child.tag.rsplit("}", 1)[-1]: child.text or "" for child in root}
     if message.get("MsgType") != "text":
-        return "success"
+        return Response(content="success", media_type="text/plain")
 
     user_id = message.get("FromUserName", "unknown")
     user_text = message.get("Content", "")
@@ -216,28 +216,28 @@ async def receive_wechat(request: Request) -> str:
     source_message_id = message.get("MsgId") or f"{user_id}:{message.get('CreateTime', '')}:{user_text}"
     if user_text.startswith("/harness"):
         telemetry.finish(receive_event, output="command")
-        return wechat.render_text(user_id, message.get("ToUserName", ""), harness_command(user_id, user_text))
+        return Response(content=wechat.render_text(user_id, message.get("ToUserName", ""), harness_command(user_id, user_text)), media_type="application/xml")
     if user_text.startswith("/email"):
         telemetry.finish(receive_event, output="email_command")
-        return wechat.render_text(user_id, message.get("ToUserName", ""), email_command(user_id, user_text))
+        return Response(content=wechat.render_text(user_id, message.get("ToUserName", ""), email_command(user_id, user_text)), media_type="application/xml")
     if user_text.startswith("/task") or user_text in {"结果", "任务"}:
         telemetry.finish(receive_event, output="task_status")
-        return wechat.render_text(user_id, message.get("ToUserName", ""), task_command(user_id, user_text))
+        return Response(content=wechat.render_text(user_id, message.get("ToUserName", ""), task_command(user_id, user_text)), media_type="application/xml")
 
     sync_reply = await try_sync_reply(user_id, user_text)
     if sync_reply is not None:
         telemetry.finish(receive_event, output="sync_reply")
-        return wechat.render_text(user_id, message.get("ToUserName", ""), sync_reply)
+        return Response(content=wechat.render_text(user_id, message.get("ToUserName", ""), sync_reply), media_type="application/xml")
 
     notification_email = jobs.get_notification_email(user_id, "")
     if not notification_email:
         telemetry.finish(receive_event, output="email_required")
-        return wechat.render_text(
+        return Response(content=wechat.render_text(
             user_id,
             message.get("ToUserName", ""),
             "这个请求需要后台处理。开始前请先设置结果通知邮箱：\n"
             "/email set your@example.com\n\n设置后请重新发送刚才的问题。",
-        )
+        ), media_type="application/xml")
 
     queue_event = telemetry.start(trace_id, "queue.enqueue", "queue", receive_event)
     job = jobs.enqueue(source_message_id, user_id, user_id, user_text, trace_id)
@@ -248,7 +248,7 @@ async def receive_wechat(request: Request) -> str:
         "预计约 1～3 分钟完成。当前公众号不支持主动推送，请稍后发送 "
         f"/task {job['id']} 查询结果。"
     )
-    return wechat.render_text(user_id, message.get("ToUserName", ""), reply)
+    return Response(content=wechat.render_text(user_id, message.get("ToUserName", ""), reply), media_type="application/xml")
 
 
 def harness_command(session_id: str, text: str) -> str:

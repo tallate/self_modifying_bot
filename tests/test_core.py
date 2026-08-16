@@ -2,12 +2,15 @@ import hashlib
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
+import time
 from pathlib import Path
 
 from channels import WeChatChannel
 from evolution import EvolutionMemory
 from jobs import JobStore
 from app import is_simple_query
+from app import app, wechat
+from fastapi.testclient import TestClient
 from observability import Telemetry
 
 
@@ -66,6 +69,24 @@ class QueryRoutingTests(unittest.TestCase):
     def test_short_chat_is_sync_candidate_and_long_tool_work_is_async_candidate(self) -> None:
         self.assertTrue(is_simple_query("你好"))
         self.assertFalse(is_simple_query("请分析这个项目并设计测试方案"))
+
+
+class WeChatWebhookTests(unittest.TestCase):
+    def test_text_reply_is_xml_and_supports_namespaced_payload(self) -> None:
+        timestamp = str(int(time.time()))
+        nonce = "test-nonce"
+        signature = hashlib.sha1("".join(sorted((wechat.token, timestamp, nonce))).encode()).hexdigest()
+        body = "<xml xmlns='urn:wechat'><ToUserName>account</ToUserName><FromUserName>user</FromUserName><CreateTime>1</CreateTime><MsgType>text</MsgType><Content>/harness status</Content><MsgId>1</MsgId></xml>"
+
+        response = TestClient(app).post(
+            f"/wechat?signature={signature}&timestamp={timestamp}&nonce={nonce}",
+            content=body,
+            headers={"Content-Type": "application/xml"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("application/xml", response.headers["content-type"])
+        self.assertEqual(ET.fromstring(response.content).findtext("Content"), "当前 Harness：deepseek_harness\n可切换：deepseek_harness、hermes_agent、echo。")
 
 
 class TelemetryTests(unittest.TestCase):
