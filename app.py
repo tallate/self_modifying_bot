@@ -184,16 +184,22 @@ async def dashboard_trace(trace_id: str) -> str:
         attrs = event.get("attributes", {})
         payload = attrs.get("payload")
         details = json.dumps(attrs, ensure_ascii=False, indent=2, default=str)
+        error = ""
+        if event.get("error_type") or event.get("error_message"):
+            error = (
+                f"<div class='error-box'><strong>{escape(event.get('error_type') or 'Error')}</strong>"
+                f"<pre>{escape(event.get('error_message') or '无错误详情')}</pre></div>"
+            )
         cards.append(
             f"<article class='trace-card'><div class='trace-head'><strong>{escape(event['event_name'])}</strong>"
             f"<span class='status {escape(event['status'])}'>{escape(event['status'])}</span></div>"
             f"<div class='meta'>{escape(event['component'])} · {escape(str(event.get('duration_ms') or '—'))} ms</div>"
-            f"{f'<pre class=payload>{escape(str(payload))}</pre>' if payload is not None else ''}"
+            f"{error}{f'<pre class=payload>{escape(str(payload))}</pre>' if payload is not None else ''}"
             f"<details><summary>事件属性</summary><pre>{escape(details)}</pre></details></article>"
         )
     return f"""<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>
 <title>Trace {escape(trace_id)}</title><style>
-body{{margin:0;background:#0b1120;color:#e8eefc;font:14px/1.5 Segoe UI,Microsoft YaHei,sans-serif}}main{{max-width:1100px;margin:0 auto;padding:32px 20px}}a{{color:#67a4ff}}h1{{margin:0 0 6px}}.muted{{color:#8fa1c2}}.trace-card{{margin-top:14px;background:#111a2e;border:1px solid #263554;border-radius:14px;padding:18px}}.trace-head{{display:flex;justify-content:space-between;align-items:center}}.meta{{color:#8fa1c2;margin:8px 0 14px}}.status{{border-radius:999px;padding:4px 9px;font-size:11px}}.status.success{{color:#36d399;background:#123426}}.status.failure{{color:#fb7185;background:#3a1725}}.status.running{{color:#fbbf24;background:#3c2d0d}}pre{{white-space:pre-wrap;overflow:auto;background:#0d1629;border-radius:9px;padding:14px;color:#d7e3ff}}.payload{{max-height:360px}}summary{{color:#67a4ff;cursor:pointer}}</style></head><body><main>
+body{{margin:0;background:#0b1120;color:#e8eefc;font:14px/1.5 Segoe UI,Microsoft YaHei,sans-serif}}main{{max-width:1100px;margin:0 auto;padding:32px 20px}}a{{color:#67a4ff}}h1{{margin:0 0 6px}}.muted{{color:#8fa1c2}}.trace-card{{margin-top:14px;background:#111a2e;border:1px solid #263554;border-radius:14px;padding:18px}}.trace-head{{display:flex;justify-content:space-between;align-items:center}}.meta{{color:#8fa1c2;margin:8px 0 14px}}.status{{border-radius:999px;padding:4px 9px;font-size:11px}}.status.success{{color:#36d399;background:#123426}}.status.failure{{color:#fb7185;background:#3a1725}}.status.running{{color:#fbbf24;background:#3c2d0d}}.error-box{{margin:12px 0;padding:12px;border-left:3px solid #fb7185;background:#3a1725;color:#ffd2dc}}pre{{white-space:pre-wrap;overflow:auto;background:#0d1629;border-radius:9px;padding:14px;color:#d7e3ff}}.payload{{max-height:360px}}summary{{color:#67a4ff;cursor:pointer}}</style></head><body><main>
 <p><a href='/dashboard'>← 返回 Dashboard</a></p><h1>Trace 详情</h1><div class='muted'>{escape(trace_id)} · {len(events)} 个事件</div>{''.join(cards)}</main></body></html>"""
 
 
