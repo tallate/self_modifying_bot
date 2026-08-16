@@ -16,7 +16,7 @@ from config import load_config
 from evolution import EvolutionMemory
 from jobs import JobStore, format_job
 from observability import Telemetry
-from runtimes import build_runtime
+from runtimes import RuntimeBusyError, build_runtime
 
 
 config = load_config()
@@ -82,6 +82,10 @@ async def web_chat(payload: ChatRequest) -> ChatResponse:
         telemetry.finish(model_input_event, payload=telemetry.capture(getattr(selected_runtime, "last_input", text)))
         telemetry.finish(runtime_event, "failure", error)
         raise HTTPException(status_code=504, detail="机器人响应超时，请稍后重试") from error
+    except RuntimeBusyError as error:
+        telemetry.finish(model_input_event, payload=telemetry.capture(getattr(selected_runtime, "last_input", text)))
+        telemetry.finish(runtime_event, "failure", error)
+        raise HTTPException(status_code=409, detail="当前会话上一轮仍在处理中，请稍后再试") from error
     except Exception as error:
         telemetry.finish(model_input_event, payload=telemetry.capture(getattr(selected_runtime, "last_input", text)))
         telemetry.finish(runtime_event, "failure", error)
@@ -319,6 +323,10 @@ async def try_sync_reply(user_id: str, text: str) -> str | None:
         telemetry.finish(model_input_event, payload=telemetry.capture(getattr(selected_runtime, "last_input", text)))
         telemetry.finish(runtime_event, "failure", TimeoutError("runtime timeout"))
         return None
+    except RuntimeBusyError:
+        telemetry.finish(model_input_event, payload=telemetry.capture(getattr(selected_runtime, "last_input", text)))
+        telemetry.finish(runtime_event, "failure", RuntimeBusyError("session is busy"))
+        return "当前会话上一轮仍在处理中，请稍后再试。"
     except Exception as error:
         telemetry.finish(model_input_event, payload=telemetry.capture(getattr(selected_runtime, "last_input", text)))
         telemetry.finish(runtime_event, "failure", error)

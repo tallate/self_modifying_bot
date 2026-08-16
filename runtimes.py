@@ -5,6 +5,7 @@ import json
 import os
 import shlex
 import subprocess
+import threading
 from pathlib import Path
 from typing import Protocol
 
@@ -25,6 +26,10 @@ class AgentRuntime(Protocol):
     async def reply(self, text: str, session_id: str, memory: str = "") -> str: ...
 
 
+class RuntimeBusyError(RuntimeError):
+    """Raised when a session already has an active Harness turn."""
+
+
 class EchoRuntime:
     async def reply(self, text: str, session_id: str, memory: str = "") -> str:
         return f"收到：{text}"
@@ -35,6 +40,7 @@ class DeepSeekHarnessRuntime:
         self.config = config
         self._harness = None
         self._sessions = {}
+        self._session_locks = {}
         self.last_events = []
         self.last_input = ""
 
@@ -52,6 +58,11 @@ class DeepSeekHarnessRuntime:
             self._sessions[session_id] = self._harness.start_session(session_id)
         return self._sessions[session_id]
 
+    def _lock_for(self, session_id: str) -> threading.Lock:
+        if session_id not in self._session_locks:
+            self._session_locks[session_id] = threading.Lock()
+        return self._session_locks[session_id]
+
     async def reply(self, text: str, session_id: str, memory: str = "") -> str:
         try:
             from deepseek_harness import DeepSeekHarness  # noqa: F401
@@ -61,9 +72,15 @@ class DeepSeekHarnessRuntime:
         def run() -> str:
             prompt = self._prompt(text, session_id, memory)
             self.last_input = prompt
-            result = self._session(session_id).run(prompt)
-            self.last_events = result.events
-            return result.final_response
+            lock = self._lock_for(session_id)
+            if not lock.acquire(blocking=False):
+                raise RuntimeBusyError(f"session {session_id} already has an active Harness turn")
+            try:
+                result = self._session(session_id).run(prompt)
+                self.last_events = result.events
+                return result.final_response
+            finally:
+                lock.release()
 
         return await asyncio.to_thread(run)
 
@@ -72,6 +89,7 @@ class DeepSeekHarnessRuntime:
             self._harness.close()
             self._harness = None
             self._sessions.clear()
+            self._session_locks.clear()
 
     def _prompt(self, text: str, session_id: str, memory: str) -> str:
         return (
