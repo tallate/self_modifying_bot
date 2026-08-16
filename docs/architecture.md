@@ -226,6 +226,8 @@ Hermes 适合作为知识进化器：保留其 Background Review 和 Curator，�
 
 DeepSeek Harness 适合作为能力实验器：允许它在 Candidate Environment 中 inspect、define 和 run 动态插件，但禁止直接加载生产密钥或共享宿主 shell。成功的 Cordis 包转换为带 manifest、依赖锁、能力清单、健康检查和签名的 `PluginCandidate`；通过评测后才发布到 Runtime 目录。
 
+在接入层必须复用同一个 `DeepSeekHarness` 进程和同一个会话句柄，而不能在每次 `reply()` 中重新创建 `with DeepSeekHarness(...)`。Cordis 动态包只存于 DSH 进程内存；正确的生命周期是：用户会话创建时启动 Harness，后续轮次调用同一 `Session.run()`，会话结束或 Runtime 切换时显式 `close()`。这样 `cordis_define` 后下一轮才能通过已注册工具验证插件仍在运行。进程重启后动态包必然消失，若要持久化必须把源码、依赖、能力清单和评测结果提升为正式 `PluginCandidate`，再经发布流程安装。
+
 Prime Agent 适合作为局部精炼器：允许 `/refine` 修改 session-local 或 project-local 状态，保留其 planning/apply 分离、冲突检测和 snapshot。写入 global scope 必须转化为 `AgentSpecCandidate`，由控制层进行跨 Runtime 回放；持久 Kernel 只能绑定授权的 Execution Environment，不能继承控制面的生产权限。
 
 ## 9. 上下文、能力和自进化的隔离
