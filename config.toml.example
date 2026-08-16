@@ -1,0 +1,14 @@
+[wechat]
+token = "self_modifying_bot"
+
+[agent]
+# deepseek_harness (default), hermes_agent, or echo
+runtime = "deepseek_harness"
+provider = "deepseek-official"
+model = "deepseek-chat"
+hermes_command = "hermes"
+
+[evolution]
+enabled = true
+memory_file = "memory.jsonl"
+memory_limit = 200

@@ -1,0 +1,4 @@
+interface:
+  display_name: "推送通知"
+  short_description: "在机器人任务真正完成后通过 QQ 邮箱发送一封通知邮件"
+  default_prompt: "Use $push-notification to notify me by email when this bot task is genuinely complete."

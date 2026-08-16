@@ -1,0 +1,11 @@
+.env
+.venv/
+__pycache__/
+.pytest_cache/
+.sessions/
+*.db
+*.db-shm
+*.db-wal
+memory.jsonl
+*.log
+PERSONA.md

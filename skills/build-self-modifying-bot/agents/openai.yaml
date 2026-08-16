@@ -1,0 +1,4 @@
+interface:
+  display_name: "Build Self-Modifying Bot"
+  short_description: "Build configurable channel bots with secure agent runtimes"
+  default_prompt: "Use $build-self-modifying-bot to build or extend a secure channel-based agent bot."

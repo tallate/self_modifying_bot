@@ -1,0 +1,106 @@
+from __future__ import annotations
+
+import json
+import sqlite3
+import uuid
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+class Telemetry:
+    """Local trace store for inspecting one bot request end to end."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self._connect() as connection:
+            connection.execute(
+                """CREATE TABLE IF NOT EXISTS trace_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    trace_id TEXT NOT NULL,
+                    parent_id INTEGER,
+                    event_name TEXT NOT NULL,
+                    component TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    started_at TEXT NOT NULL,
+                    finished_at TEXT,
+                    duration_ms INTEGER,
+                    attributes_json TEXT NOT NULL DEFAULT '{}',
+                    error_type TEXT,
+                    error_message TEXT
+                )"""
+            )
+            connection.execute("CREATE INDEX IF NOT EXISTS trace_events_trace ON trace_events(trace_id, id)")
+
+    @contextmanager
+    def _connect(self):
+        connection = sqlite3.connect(self.path, timeout=30)
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA journal_mode=WAL")
+        try:
+            yield connection
+            connection.commit()
+        except BaseException:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+    @staticmethod
+    def new_trace_id() -> str:
+        return f"tr_{uuid.uuid4().hex[:12]}"
+
+    def start(self, trace_id: str, event_name: str, component: str, parent_id: int | None = None, **attributes: Any) -> int:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """INSERT INTO trace_events
+                (trace_id, parent_id, event_name, component, status, started_at, attributes_json)
+                VALUES (?, ?, ?, ?, 'running', ?, ?)""",
+                (trace_id, parent_id, event_name, component, now_iso(), json.dumps(attributes, ensure_ascii=False)),
+            )
+            return int(cursor.lastrowid)
+
+    def finish(self, event_id: int, status: str = "success", error: BaseException | None = None, **attributes: Any) -> None:
+        finished = datetime.now(timezone.utc)
+        with self._connect() as connection:
+            row = connection.execute("SELECT started_at FROM trace_events WHERE id = ?", (event_id,)).fetchone()
+            if row is None:
+                return
+            started = datetime.fromisoformat(row["started_at"])
+            error_type = type(error).__name__ if error else None
+            connection.execute(
+                """UPDATE trace_events SET status = ?, finished_at = ?, duration_ms = ?,
+                attributes_json = ?, error_type = ?, error_message = ? WHERE id = ?""",
+                (status, finished.isoformat(), int((finished - started).total_seconds() * 1000),
+                 json.dumps(attributes, ensure_ascii=False), error_type, str(error) if error else None, event_id),
+            )
+
+    def recent_failures(self, limit: int = 20) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            return [dict(row) for row in connection.execute(
+                "SELECT * FROM trace_events WHERE status = 'failure' ORDER BY id DESC LIMIT ?", (limit,)
+            )]
+
+    def recent(self, limit: int = 50) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            return [dict(row) for row in connection.execute(
+                "SELECT * FROM trace_events ORDER BY id DESC LIMIT ?", (limit,)
+            )]
+
+    def trace(self, trace_id: str) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            rows = connection.execute("SELECT * FROM trace_events WHERE trace_id = ? ORDER BY id", (trace_id,))
+            return [dict(row) for row in rows]
+
+    def summary(self) -> dict[str, Any]:
+        with self._connect() as connection:
+            total = connection.execute("SELECT COUNT(*) FROM trace_events").fetchone()[0]
+            failures = connection.execute("SELECT COUNT(*) FROM trace_events WHERE status = 'failure'").fetchone()[0]
+            running = connection.execute("SELECT COUNT(*) FROM trace_events WHERE status = 'running'").fetchone()[0]
+            return {"events": total, "failures": failures, "running": running}
