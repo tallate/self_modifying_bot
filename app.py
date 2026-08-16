@@ -79,10 +79,14 @@ async def web_chat(payload: ChatRequest) -> ChatResponse:
             selected_runtime.reply(text, session_id, memory.context(session_id)), timeout=60
         )
     except (TimeoutError, asyncio.TimeoutError) as error:
+        if hasattr(selected_runtime, "close"):
+            selected_runtime.close()
         telemetry.finish(model_input_event, payload=telemetry.capture(getattr(selected_runtime, "last_input", text)))
         telemetry.finish(runtime_event, "failure", error)
         raise HTTPException(status_code=504, detail="机器人响应超时，请稍后重试") from error
     except RuntimeBusyError as error:
+        if hasattr(selected_runtime, "close"):
+            selected_runtime.close()
         telemetry.finish(model_input_event, payload=telemetry.capture(getattr(selected_runtime, "last_input", text)))
         telemetry.finish(runtime_event, "failure", error)
         raise HTTPException(status_code=409, detail="当前会话上一轮仍在处理中，请稍后再试") from error
@@ -334,10 +338,14 @@ async def try_sync_reply(user_id: str, text: str) -> str | None:
             selected_runtime.reply(text, user_id, memory.context(user_id)), timeout=60
         )
     except (TimeoutError, asyncio.TimeoutError):
+        if hasattr(selected_runtime, "close"):
+            selected_runtime.close()
         telemetry.finish(model_input_event, payload=telemetry.capture(getattr(selected_runtime, "last_input", text)))
         telemetry.finish(runtime_event, "failure", TimeoutError("runtime timeout"))
         return "同步处理超时，本次没有创建后台任务。若希望放到后台执行，请明确说‘异步处理’或‘创建任务’。"
     except RuntimeBusyError:
+        if hasattr(selected_runtime, "close"):
+            selected_runtime.close()
         telemetry.finish(model_input_event, payload=telemetry.capture(getattr(selected_runtime, "last_input", text)))
         telemetry.finish(runtime_event, "failure", RuntimeBusyError("session is busy"))
         return "当前会话上一轮仍在处理中，请稍后再试。"

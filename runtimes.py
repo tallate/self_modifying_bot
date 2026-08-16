@@ -97,10 +97,15 @@ class DeepSeekHarnessRuntime:
 
     def close(self) -> None:
         if self._harness is not None:
-            self._harness.close()
+            harness = self._harness
             self._harness = None
             self._sessions.clear()
             self._session_locks.clear()
+            try:
+                harness.close()
+            except Exception:
+                # A timed-out SDK turn may already have torn down its child process.
+                pass
 
     @staticmethod
     def _last_runtime_error(events: list[dict]) -> str:
