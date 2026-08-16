@@ -228,8 +228,8 @@ async def receive_wechat(request: Request) -> Response:
         telemetry.finish(receive_event, output="task_status")
         return Response(content=wechat.render_text(user_id, message.get("ToUserName", ""), task_command(user_id, user_text)), media_type="application/xml")
 
-    sync_reply = await try_sync_reply(user_id, user_text)
-    if sync_reply is not None:
+    if not is_explicit_async_request(user_text):
+        sync_reply = await try_sync_reply(user_id, user_text)
         telemetry.finish(receive_event, output="sync_reply")
         return Response(content=wechat.render_text(user_id, message.get("ToUserName", ""), sync_reply), media_type="application/xml")
 
@@ -307,9 +307,16 @@ def is_simple_query(text: str) -> bool:
     )
 
 
+def is_explicit_async_request(text: str) -> bool:
+    normalized = text.strip().lower()
+    async_markers = (
+        "异步", "后台处理", "放到后台", "创建任务", "启动任务", "长程", "长时间运行",
+        "稍后给我", "完成后通知", "邮件通知", "async", "background", "long-running",
+    )
+    return any(marker in normalized for marker in async_markers)
+
+
 async def try_sync_reply(user_id: str, text: str) -> str | None:
-    if not is_simple_query(text):
-        return None
     quick_reply = quick_greeting(text)
     if quick_reply is not None:
         return quick_reply
@@ -329,7 +336,7 @@ async def try_sync_reply(user_id: str, text: str) -> str | None:
     except (TimeoutError, asyncio.TimeoutError):
         telemetry.finish(model_input_event, payload=telemetry.capture(getattr(selected_runtime, "last_input", text)))
         telemetry.finish(runtime_event, "failure", TimeoutError("runtime timeout"))
-        return None
+        return "同步处理超时，本次没有创建后台任务。若希望放到后台执行，请明确说‘异步处理’或‘创建任务’。"
     except RuntimeBusyError:
         telemetry.finish(model_input_event, payload=telemetry.capture(getattr(selected_runtime, "last_input", text)))
         telemetry.finish(runtime_event, "failure", RuntimeBusyError("session is busy"))

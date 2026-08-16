@@ -8,7 +8,7 @@ from pathlib import Path
 from channels import WeChatChannel
 from evolution import EvolutionMemory
 from jobs import JobStore
-from app import is_simple_query, quick_greeting
+from app import is_explicit_async_request, is_simple_query, quick_greeting
 from app import app, wechat
 from fastapi.testclient import TestClient
 from observability import Telemetry
@@ -71,6 +71,8 @@ class QueryRoutingTests(unittest.TestCase):
         self.assertFalse(is_simple_query("请分析这个项目并设计测试方案"))
         self.assertEqual(quick_greeting("你好！"), "你好！我是 self_modifying_bot，有什么可以帮你？")
         self.assertIsNone(quick_greeting("请介绍一下项目"))
+        self.assertFalse(is_explicit_async_request("请分析这个项目"))
+        self.assertTrue(is_explicit_async_request("请异步创建任务处理"))
 
 
 class WeChatWebhookTests(unittest.TestCase):
