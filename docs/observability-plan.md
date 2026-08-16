@@ -20,7 +20,18 @@ wechat.receive
 
 事件字段包括 `trace_id`、`parent_id`、`event_name`、`component`、`status`、时间、耗时、结构化属性和错误分类。
 
-用户原文、API Key 和完整模型输出不进入观测日志；需要调试时只保存脱敏摘要。
+模型输入和输出现在以有界、脱敏的 `payload` 保存到 Trace 事件属性中；API Key、Authorization、Token、Password 和 Secret 会被替换为 `[REDACTED]`。默认单个 payload 最多 12000 个字符，生产部署仍应通过访问控制限制 Dashboard。原始工具结果不应绕过该脱敏层直接写日志。
+
+模型与工具事件约定：
+
+```text
+model.input   -> 本轮送入 Runtime 的会话、记忆和用户消息摘要
+model.output  -> Runtime 返回的模型结果
+tool.call     -> Harness 暴露的工具名称、脱敏参数和调用状态
+tool.result   -> 工具结果摘要、耗时和错误
+```
+
+当前 DeepSeek/Hermes 适配器仍使用兼容的 `reply()` 接口，尚未把原生工具事件暴露给控制层，因此 Trace 会在 `model.output` 和 `runtime.call` 中标记 `tool_events=adapter_not_exposed`，不会伪造工具调用。完成事件流 Adapter 后，按上述 `tool.call`/`tool.result` 事件写入同一 Trace。
 
 ## 接口
 
@@ -28,6 +39,7 @@ wechat.receive
 - `GET /api/observability/summary`：事件总数、失败数和运行中事件数。
 - `GET /api/observability/failures`：最近失败事件。
 - `GET /api/observability/traces/{trace_id}`：单个 Trace 的执行链路。
+- `GET /dashboard/traces/{trace_id}`：可展开查看模型输入、模型输出和事件属性的 Trace 页面。
 
 ## 健康判断
 

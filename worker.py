@@ -56,11 +56,22 @@ async def run_worker() -> None:
             continue
         trace_id = job["trace_id"] or telemetry.new_trace_id()
         worker_event = telemetry.start(trace_id, "worker.process", "worker", job_id=job["id"], worker_id=worker_id)
-        runtime = build_runtime(config, store.get_session_runtime(job["session_id"], config.runtime))
-        runtime_event = telemetry.start(trace_id, "runtime.call", config.runtime, worker_event, model=config.model)
+        runtime_name = store.get_session_runtime(job["session_id"], config.runtime)
+        runtime = build_runtime(config, runtime_name)
+        runtime_event = telemetry.start(trace_id, "runtime.call", runtime_name, worker_event, model=config.model)
+        model_input_event = telemetry.start(
+            trace_id, "model.input", runtime_name, runtime_event,
+            payload=telemetry.capture(f"session={job['session_id']}\n用户：{job['text']}"),
+        )
+        telemetry.finish(model_input_event)
         try:
             result = await runtime.reply(job["text"], job["session_id"], "")
-            telemetry.finish(runtime_event, output_length=len(result))
+            model_output_event = telemetry.start(
+                trace_id, "model.output", runtime_name, runtime_event,
+                payload=telemetry.capture(result), output_length=len(result), tool_events="adapter_not_exposed",
+            )
+            telemetry.finish(model_output_event)
+            telemetry.finish(runtime_event, output_length=len(result), tool_events="adapter_not_exposed")
             store.finish(job["id"], worker_id, result=result)
             telemetry.finish(worker_event, job_id=job["id"])
             store.apply_pending_runtime(job["session_id"])

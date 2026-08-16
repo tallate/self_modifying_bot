@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import xml.etree.ElementTree as ET
 from html import escape
@@ -62,6 +63,11 @@ async def web_chat(payload: ChatRequest) -> ChatResponse:
     runtime_event = telemetry.start(
         trace_id, "runtime.call", runtime_name, runtime=runtime_name, model=config.model, channel="web"
     )
+    model_input_event = telemetry.start(
+        trace_id, "model.input", runtime_name, runtime=runtime_name,
+        payload=telemetry.capture(f"session={session_id}\n{memory.context(session_id)}\n用户：{text}"),
+    )
+    telemetry.finish(model_input_event)
     selected_runtime = build_runtime(config, runtime_name)
     try:
         reply = await asyncio.wait_for(
@@ -74,7 +80,12 @@ async def web_chat(payload: ChatRequest) -> ChatResponse:
         telemetry.finish(runtime_event, "failure", error)
         raise HTTPException(status_code=502, detail="机器人暂时不可用，请稍后重试") from error
 
-    telemetry.finish(runtime_event, output_length=len(reply))
+    model_output_event = telemetry.start(
+        trace_id, "model.output", runtime_name, runtime=runtime_name, parent_id=runtime_event,
+        payload=telemetry.capture(reply), output_length=len(reply), tool_events="adapter_not_exposed",
+    )
+    telemetry.finish(model_output_event)
+    telemetry.finish(runtime_event, output_length=len(reply), tool_events="adapter_not_exposed")
     memory.remember(session_id, text, reply)
     jobs.apply_pending_runtime(session_id)
     return ChatResponse(reply=reply[:12000], session_id=session_id)
@@ -107,7 +118,7 @@ async def dashboard() -> str:
     health = "healthy" if summary["failures"] == 0 else "warning"
     health_label = "健康" if health == "healthy" else "需要关注"
     rows = "".join(
-        f"<tr><td><a href='/api/observability/traces/{escape(row['trace_id'])}'>{escape(row['trace_id'])}</a></td>"
+        f"<tr><td><a href='/dashboard/traces/{escape(row['trace_id'])}'>{escape(row['trace_id'])}</a></td>"
         f"<td>{escape(row['event_name'])}</td><td>{escape(row['component'])}</td>"
         f"<td><span class='status {escape(row['status'])}'>{escape(row['status'])}</span></td>"
         f"<td>{escape(str(row['duration_ms'] or '—'))} ms</td><td class='error'>{escape(row['error_type'] or '—')}</td></tr>"
@@ -140,6 +151,29 @@ a {{ color:var(--blue); text-decoration:none; }} .status {{ border-radius:999px;
 <div class='section'><div class='section-head'><h2>当前 Runtime</h2><span class='label'>默认路由</span></div><div class='card runtime'><span class='dot'></span><div><strong>{escape(config.runtime)}</strong><br><span>{escape(config.model)} · {escape(config.provider)}</span></div></div></div>
 <div class='section'><div class='section-head'><h2>最近 Trace 事件</h2><a href='/api/observability/traces'>查看 JSON</a></div><div class='table-wrap'><table><tr><th>Trace</th><th>阶段</th><th>组件</th><th>状态</th><th>耗时</th><th>错误</th></tr>{rows}</table></div></div>
 </main></div></body></html>"""
+
+
+@app.get("/dashboard/traces/{trace_id}", response_class=HTMLResponse)
+async def dashboard_trace(trace_id: str) -> str:
+    events = telemetry.trace(trace_id)
+    if not events:
+        raise HTTPException(status_code=404, detail="trace not found")
+    cards = []
+    for event in events:
+        attrs = event.get("attributes", {})
+        payload = attrs.get("payload")
+        details = json.dumps(attrs, ensure_ascii=False, indent=2, default=str)
+        cards.append(
+            f"<article class='trace-card'><div class='trace-head'><strong>{escape(event['event_name'])}</strong>"
+            f"<span class='status {escape(event['status'])}'>{escape(event['status'])}</span></div>"
+            f"<div class='meta'>{escape(event['component'])} · {escape(str(event.get('duration_ms') or '—'))} ms</div>"
+            f"{f'<pre class=payload>{escape(str(payload))}</pre>' if payload is not None else ''}"
+            f"<details><summary>事件属性</summary><pre>{escape(details)}</pre></details></article>"
+        )
+    return f"""<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>
+<title>Trace {escape(trace_id)}</title><style>
+body{{margin:0;background:#0b1120;color:#e8eefc;font:14px/1.5 Segoe UI,Microsoft YaHei,sans-serif}}main{{max-width:1100px;margin:0 auto;padding:32px 20px}}a{{color:#67a4ff}}h1{{margin:0 0 6px}}.muted{{color:#8fa1c2}}.trace-card{{margin-top:14px;background:#111a2e;border:1px solid #263554;border-radius:14px;padding:18px}}.trace-head{{display:flex;justify-content:space-between;align-items:center}}.meta{{color:#8fa1c2;margin:8px 0 14px}}.status{{border-radius:999px;padding:4px 9px;font-size:11px}}.status.success{{color:#36d399;background:#123426}}.status.failure{{color:#fb7185;background:#3a1725}}.status.running{{color:#fbbf24;background:#3c2d0d}}pre{{white-space:pre-wrap;overflow:auto;background:#0d1629;border-radius:9px;padding:14px;color:#d7e3ff}}.payload{{max-height:360px}}summary{{color:#67a4ff;cursor:pointer}}</style></head><body><main>
+<p><a href='/dashboard'>← 返回 Dashboard</a></p><h1>Trace 详情</h1><div class='muted'>{escape(trace_id)} · {len(events)} 个事件</div>{''.join(cards)}</main></body></html>"""
 
 
 @app.get("/wechat", response_class=PlainTextResponse)
@@ -262,6 +296,11 @@ async def try_sync_reply(user_id: str, text: str) -> str | None:
     runtime_name = jobs.get_session_runtime(user_id, config.runtime)
     trace_id = telemetry.new_trace_id()
     runtime_event = telemetry.start(trace_id, "runtime.call", runtime_name, runtime=runtime_name, model=config.model)
+    model_input_event = telemetry.start(
+        trace_id, "model.input", runtime_name, runtime=runtime_name,
+        payload=telemetry.capture(f"session={user_id}\n{memory.context(user_id)}\n用户：{text}"),
+    )
+    telemetry.finish(model_input_event)
     selected_runtime = build_runtime(config, runtime_name)
     try:
         reply = await asyncio.wait_for(
@@ -273,7 +312,12 @@ async def try_sync_reply(user_id: str, text: str) -> str | None:
     except Exception as error:
         telemetry.finish(runtime_event, "failure", error)
         return f"当前 Harness 调用失败：{type(error).__name__}。请检查 Harness 配置后重试。"
-    telemetry.finish(runtime_event, output_length=len(reply))
+    model_output_event = telemetry.start(
+        trace_id, "model.output", runtime_name, runtime=runtime_name, parent_id=runtime_event,
+        payload=telemetry.capture(reply), output_length=len(reply), tool_events="adapter_not_exposed",
+    )
+    telemetry.finish(model_output_event)
+    telemetry.finish(runtime_event, output_length=len(reply), tool_events="adapter_not_exposed")
     memory.remember(user_id, text, reply)
     jobs.apply_pending_runtime(user_id)
     return reply[:2000]

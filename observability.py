@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import uuid
 from contextlib import contextmanager
@@ -56,6 +57,13 @@ class Telemetry:
     def new_trace_id() -> str:
         return f"tr_{uuid.uuid4().hex[:12]}"
 
+    @staticmethod
+    def capture(value: Any, limit: int = 12000) -> str:
+        """Return a bounded, minimally redacted representation for local traces."""
+        text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
+        text = re.sub(r"(?i)(api[_-]?key|authorization|token|password|secret)\s*[:=]\s*[^\s,;]+", r"\1=[REDACTED]", text)
+        return text[:limit] + ("…" if len(text) > limit else "")
+
     def start(self, trace_id: str, event_name: str, component: str, parent_id: int | None = None, **attributes: Any) -> int:
         with self._connect() as connection:
             cursor = connection.execute(
@@ -83,20 +91,28 @@ class Telemetry:
 
     def recent_failures(self, limit: int = 20) -> list[dict[str, Any]]:
         with self._connect() as connection:
-            return [dict(row) for row in connection.execute(
+            return [self._decode(dict(row)) for row in connection.execute(
                 "SELECT * FROM trace_events WHERE status = 'failure' ORDER BY id DESC LIMIT ?", (limit,)
             )]
 
     def recent(self, limit: int = 50) -> list[dict[str, Any]]:
         with self._connect() as connection:
-            return [dict(row) for row in connection.execute(
+            return [self._decode(dict(row)) for row in connection.execute(
                 "SELECT * FROM trace_events ORDER BY id DESC LIMIT ?", (limit,)
             )]
 
     def trace(self, trace_id: str) -> list[dict[str, Any]]:
         with self._connect() as connection:
             rows = connection.execute("SELECT * FROM trace_events WHERE trace_id = ? ORDER BY id", (trace_id,))
-            return [dict(row) for row in rows]
+            return [self._decode(dict(row)) for row in rows]
+
+    @staticmethod
+    def _decode(event: dict[str, Any]) -> dict[str, Any]:
+        try:
+            event["attributes"] = json.loads(event.pop("attributes_json"))
+        except (KeyError, TypeError, json.JSONDecodeError):
+            event["attributes"] = {}
+        return event
 
     def summary(self) -> dict[str, Any]:
         with self._connect() as connection:
