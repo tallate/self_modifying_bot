@@ -21,6 +21,11 @@ if [[ ! -f "$CONFIG_DIR/.env" ]]; then
   install -m 0600 /dev/null "$CONFIG_DIR/.env"
   echo "Created $CONFIG_DIR/.env; add credentials before using a model runtime."
 fi
+if [[ -n "${BOT_RUNTIME:-}" ]]; then
+  grep -q '^BOT_RUNTIME=' "$CONFIG_DIR/.env" \
+    && sed -i "s/^BOT_RUNTIME=.*/BOT_RUNTIME=$BOT_RUNTIME/" "$CONFIG_DIR/.env" \
+    || printf 'BOT_RUNTIME=%s\n' "$BOT_RUNTIME" >> "$CONFIG_DIR/.env"
+fi
 chown -R 10001:10001 "$CONFIG_DIR"
 
 if [[ -d "$APP_DIR/.git" ]]; then
