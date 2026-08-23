@@ -13,7 +13,6 @@ if [[ "$(id -u)" -ne 0 ]]; then
 fi
 command -v git >/dev/null || { echo "git is required" >&2; exit 1; }
 command -v docker >/dev/null || { echo "docker is required" >&2; exit 1; }
-docker compose version >/dev/null || { echo "Docker Compose plugin is required" >&2; exit 1; }
 
 install -d -m 0750 "$CONFIG_DIR"
 if [[ ! -f "$CONFIG_DIR/.env" ]]; then
@@ -31,7 +30,19 @@ fi
 
 export BOT_CONFIG_DIR="$CONFIG_DIR"
 export BOT_PORT
-docker compose -f "$APP_DIR/deploy/docker-compose.yml" up -d --build
+if docker compose version >/dev/null 2>&1; then
+  docker compose -f "$APP_DIR/deploy/docker-compose.yml" up -d --build
+else
+  echo "Docker Compose plugin unavailable; using docker build/run fallback."
+  docker build -t self-modifying-bot:latest "$APP_DIR"
+  docker rm -f self-modifying-bot >/dev/null 2>&1 || true
+  docker run -d --name self-modifying-bot --restart unless-stopped \
+    --env-file "$CONFIG_DIR/.env" \
+    -e SELF_MODIFYING_BOT_HOME=/var/lib/self_modifying_bot \
+    -p "127.0.0.1:$BOT_PORT:8000" \
+    -v "$CONFIG_DIR:/var/lib/self_modifying_bot" \
+    self-modifying-bot:latest >/dev/null
+fi
 
 for attempt in {1..20}; do
   if curl --fail --silent --show-error "http://127.0.0.1:$BOT_PORT/health"; then
@@ -42,6 +53,11 @@ for attempt in {1..20}; do
   sleep 2
 done
 
-docker compose -f "$APP_DIR/deploy/docker-compose.yml" ps
-docker compose -f "$APP_DIR/deploy/docker-compose.yml" logs --tail 100
+if docker compose version >/dev/null 2>&1; then
+  docker compose -f "$APP_DIR/deploy/docker-compose.yml" ps
+  docker compose -f "$APP_DIR/deploy/docker-compose.yml" logs --tail 100
+else
+  docker ps -a --filter name=self-modifying-bot
+  docker logs --tail 100 self-modifying-bot || true
+fi
 exit 1
