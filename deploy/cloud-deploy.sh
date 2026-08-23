@@ -7,6 +7,7 @@ BRANCH="${BRANCH:-main}"
 CONFIG_DIR="${CONFIG_DIR:-/var/lib/self_modifying_bot}"
 BOT_PORT="${BOT_PORT:-8000}"
 PYTHON_BASE_IMAGE="${PYTHON_BASE_IMAGE:-dockerproxy.net/library/python:3.11-slim}"
+PIP_INDEX_URL="${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}"
 
 if [[ "$(id -u)" -ne 0 ]]; then
   echo "Run this script as root." >&2
@@ -35,7 +36,7 @@ if docker compose version >/dev/null 2>&1; then
   docker compose -f "$APP_DIR/deploy/docker-compose.yml" up -d --build
 else
   echo "Docker Compose plugin unavailable; using docker build/run fallback."
-  docker build --build-arg "PYTHON_BASE_IMAGE=$PYTHON_BASE_IMAGE" -t self-modifying-bot:latest "$APP_DIR"
+  docker build --build-arg "PYTHON_BASE_IMAGE=$PYTHON_BASE_IMAGE" --build-arg "PIP_INDEX_URL=$PIP_INDEX_URL" -t self-modifying-bot:latest "$APP_DIR"
   docker rm -f self-modifying-bot >/dev/null 2>&1 || true
   docker run -d --name self-modifying-bot --restart unless-stopped \
     --env-file "$CONFIG_DIR/.env" \

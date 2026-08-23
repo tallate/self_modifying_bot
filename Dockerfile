@@ -1,8 +1,10 @@
 ARG PYTHON_BASE_IMAGE=dockerproxy.net/library/python:3.11-slim
 FROM ${PYTHON_BASE_IMAGE}
 
+ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    PIP_INDEX_URL=${PIP_INDEX_URL} \
     SELF_MODIFYING_BOT_HOME=/var/lib/self_modifying_bot
 
 WORKDIR /app
