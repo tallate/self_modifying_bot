@@ -21,6 +21,7 @@ if [[ ! -f "$CONFIG_DIR/.env" ]]; then
   install -m 0600 /dev/null "$CONFIG_DIR/.env"
   echo "Created $CONFIG_DIR/.env; add credentials before using a model runtime."
 fi
+chown -R 10001:10001 "$CONFIG_DIR"
 
 if [[ -d "$APP_DIR/.git" ]]; then
   git -C "$APP_DIR" fetch origin "$BRANCH"
