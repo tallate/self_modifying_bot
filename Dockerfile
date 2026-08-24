@@ -10,6 +10,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     SELF_MODIFYING_BOT_HOME=/var/lib/self_modifying_bot
 
 WORKDIR /app
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 RUN pip install --no-cache-dir "hermes-agent @ git+${HERMES_REPOSITORY}"
