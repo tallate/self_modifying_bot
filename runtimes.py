@@ -150,6 +150,11 @@ class HermesAgentRuntime:
                 env=os.environ.copy(),
             )
             response = result.stdout.strip()
+            response = "\n".join(
+                line
+                for line in response.splitlines()
+                if not line.startswith("⚠ tirith security scanner enabled")
+            ).strip()
             if not response:
                 raise RuntimeEmptyResponseError("Hermes completed without a final response")
             return response
