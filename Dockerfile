@@ -10,7 +10,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
-RUN pip install --no-cache-dir "https://codeload.github.com/NousResearch/hermes-agent/tar.gz/refs/heads/main"
+RUN pip install --no-cache-dir uv \
+    && python -c "import os,tarfile,urllib.request; p='/tmp/hermes.tar.gz'; urllib.request.urlretrieve('https://codeload.github.com/NousResearch/hermes-agent/tar.gz/refs/heads/main',p); tarfile.open(p).extractall('/tmp'); os.rename('/tmp/hermes-agent-main','/opt/hermes')" \
+    && uv pip install --system -e /opt/hermes \
+    && rm -rf /tmp/hermes.tar.gz /opt/hermes/.git
 COPY . .
 
 RUN useradd --create-home --uid 10001 bot \
