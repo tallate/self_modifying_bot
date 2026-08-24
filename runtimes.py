@@ -142,7 +142,7 @@ class HermesAgentRuntime:
 
         def run() -> str:
             result = subprocess.run(
-                [*command, "-z", prompt, "--quiet"],
+                [*command, "chat", "-q", prompt, "-Q"],
                 capture_output=True,
                 text=True,
                 check=True,
