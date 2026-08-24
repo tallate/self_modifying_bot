@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import shlex
 import subprocess
@@ -133,23 +132,27 @@ class HermesAgentRuntime:
         self.last_events = []
 
     async def reply(self, text: str, session_id: str, memory: str = "") -> str:
-        payload = json.dumps(
-            {"session_id": session_id, "message": text, "memory": memory}, ensure_ascii=False
+        prompt = (
+            f"会话：{session_id}\n"
+            f"最近经验：\n{memory or '无'}\n\n"
+            f"用户：{text}"
         )
-        self.last_input = payload
+        self.last_input = prompt
         command = shlex.split(self.command)
 
         def run() -> str:
             result = subprocess.run(
-                [*command, "run", "--json"],
-                input=payload,
+                [*command, "-z", prompt, "--quiet"],
                 capture_output=True,
                 text=True,
                 check=True,
                 timeout=120,
                 env=os.environ.copy(),
             )
-            return result.stdout.strip()
+            response = result.stdout.strip()
+            if not response:
+                raise RuntimeEmptyResponseError("Hermes completed without a final response")
+            return response
 
         return await asyncio.to_thread(run)
 

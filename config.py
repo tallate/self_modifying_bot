@@ -43,7 +43,7 @@ def load_config() -> BotConfig:
     evolution = data.get("evolution", {})
     return BotConfig(
         wechat_token=os.getenv("WECHAT_TOKEN", wechat.get("token", "")),
-        runtime=os.getenv("BOT_RUNTIME", agent.get("runtime", "deepseek_harness")),
+        runtime=os.getenv("BOT_RUNTIME", agent.get("runtime", "hermes_agent")),
         model=os.getenv("DEEPSEEK_MODEL", agent.get("model", "deepseek-chat")),
         provider=os.getenv("DEEPSEEK_PROVIDER", agent.get("provider", "deepseek-official")),
         deepseek_api_key=os.getenv("DEEPSEEK_API_KEY", ""),

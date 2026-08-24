@@ -1,6 +1,8 @@
 ARG PYTHON_BASE_IMAGE=dockerproxy.net/library/python:3.11-slim
 FROM ${PYTHON_BASE_IMAGE}
 
+ARG HERMES_REPOSITORY=https://github.com/NousResearch/hermes-agent.git
+
 ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -10,6 +12,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir "hermes-agent @ git+${HERMES_REPOSITORY}"
 COPY . .
 
 RUN useradd --create-home --uid 10001 bot \
