@@ -5,6 +5,9 @@ ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_INDEX_URL=${PIP_INDEX_URL} \
+    HERMES_INFERENCE_PROVIDER=deepseek \
+    HERMES_INFERENCE_MODEL=deepseek-chat \
+    DEEPSEEK_BASE_URL=https://api.deepseek.com/v1 \
     SELF_MODIFYING_BOT_HOME=/var/lib/self_modifying_bot
 
 WORKDIR /app
